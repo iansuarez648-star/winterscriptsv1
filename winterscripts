@@ -1,0 +1,823 @@
+--[[
+    WINTER SCRIPTS — Blox Fruits PvP
+    
+    F  Auto Kill    L  Lock On
+    T  Kill Aura    H  Hitbox
+    V  Auto V4      G  Teleport
+    -  Hide/Show
+]]
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VIM              = game:GetService("VirtualInputManager")
+
+local LP     = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local manualTarget = nil
+local lockedTarget = nil
+local flyTarget    = nil
+local lockIdx      = 0
+local activeBV     = nil
+local v4Active     = false
+local uiVisible    = true
+
+local function getChar(p)  return p and p.Character end
+local function getHRP(p)   local c=getChar(p); return c and c:FindFirstChild("HumanoidRootPart") end
+local function getHum(p)   local c=getChar(p); return c and c:FindFirstChildOfClass("Humanoid") end
+local function isAlive(p)  local h=getHum(p);  return h and h.Health>0 end
+
+local function enemies()
+    local t={}; local mH=getHRP(LP)
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LP and isAlive(p) then
+            local h=getHRP(p)
+            if h then table.insert(t,{p=p,d=mH and (h.Position-mH.Position).Magnitude or 9999}) end
+        end
+    end
+    table.sort(t,function(a,b) return a.d<b.d end)
+    return t
+end
+
+local function furthest() local t=enemies(); return #t>0 and t[#t].p or nil end
+local function getFly()   return (manualTarget and isAlive(manualTarget) and manualTarget) or flyTarget end
+local function getLock()  return (manualTarget and isAlive(manualTarget) and manualTarget) or lockedTarget end
+
+local CFG = {
+    Fly  = { Enabled=false, Key=Enum.KeyCode.F,
+             Speed=310, StopRange=4.5, Smooth=0.28, HoverHeight=10, DiveRange=14,
+             M1Delay=0.12, SkillDelay=3.5, UseSkills=true,
+             SkillKeys={Enum.KeyCode.Z,Enum.KeyCode.X,Enum.KeyCode.C} },
+    Lock = { Enabled=false, Key=Enum.KeyCode.L, YOff=1.4 },
+    Aura = { Enabled=false, Key=Enum.KeyCode.T, Range=14, Rate=0.15 },
+    HB   = { Enabled=true,  Size=Vector3.new(12,12,12) },
+    V4   = { Enabled=false, Key=Enum.KeyCode.V, Loop=18, Retry=1.5 },
+    TP   = { Key=Enum.KeyCode.G, Off=Vector3.new(0,0,-3.5) },
+    Block= { Enabled=true,  Range=30 },
+    Dodge= { Enabled=true,  HP=0.30 },
+    ESP  = { BarOn=Color3.fromRGB(70,210,110), BarOff=Color3.fromRGB(220,60,60), T=0.55 },
+}
+
+local function cyclelock()
+    if manualTarget then return end
+    local t=enemies(); if #t==0 then lockedTarget=nil; return end
+    lockIdx=(lockIdx%(#t))+1; lockedTarget=t[lockIdx].p
+end
+
+RunService.RenderStepped:Connect(function()
+    local lt=getLock()
+    if lt and not isAlive(lt) then
+        if manualTarget==lt then manualTarget=nil end
+        lockedTarget=nil; lt=nil
+    end
+    if CFG.Lock.Enabled and lt then
+        local e=getHRP(lt)
+        if e then Camera.CFrame=CFrame.new(Camera.CFrame.Position,
+            e.Position+Vector3.new(0,CFG.Lock.YOff,0)) end
+    end
+    local any=getFly() or getLock()
+    if _G._WSTgt then
+        _G._WSTgt.Text       = any and any.Name or "none"
+        _G._WSTgt.TextColor3 = any and Color3.fromRGB(170,220,255) or Color3.fromRGB(32,38,68)
+    end
+end)
+
+local STYLES={"godhuman","superhuman","dragon","death step","electric","dark step",
+    "water kung fu","sharkman","electric claw","soru soru","ice","fire","light","magma",
+    "sand","smoke","string","rumble","phoenix","buddha","love","paw","gravity","dough",
+    "shadow","venom","soul","mammoth","t-rex","leopard","gas","fighting style"}
+
+local function isStyle(t)
+    if t:FindFirstChildOfClass("RemoteEvent") then return true end
+    local n=t.Name:lower()
+    for _,s in ipairs(STYLES) do if n:find(s) then return true end end
+end
+
+local function equipStyle()
+    local char=getChar(LP); local hum=getHum(LP); if not char or not hum then return end
+    for _,o in ipairs(char:GetChildren()) do if o:IsA("Tool") and isStyle(o) then return end end
+    local bp=LP:FindFirstChildOfClass("Backpack"); if not bp then return end
+    for _,t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") and isStyle(t) then hum:EquipTool(t); task.wait(0.25); return end
+    end
+end
+
+local V4N={"race v4","racv4","v4","awakening","race awakening","fourth"}
+local V4R={"RaceV4","V4Activate","V4","Awakening","ActivateRace","RaceAbility","AwakenRace"}
+local function isV4(n) n=n:lower(); for _,v in ipairs(V4N) do if n:find(v) then return true end end end
+
+local function fireV4()
+    local char=getChar(LP); local hum=getHum(LP)
+    if char then for _,o in ipairs(char:GetChildren()) do if o:IsA("Tool") and isV4(o.Name) then
+        local r=o:FindFirstChildOfClass("RemoteEvent")
+        if r then pcall(function() r:FireServer() end) else pcall(function() o:Activate() end) end
+        v4Active=true; return
+    end end end
+    local bp=LP:FindFirstChildOfClass("Backpack")
+    if bp and hum then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and isV4(t.Name) then
+        hum:EquipTool(t); task.wait(0.3)
+        local r=t:FindFirstChildOfClass("RemoteEvent")
+        if r then pcall(function() r:FireServer() end) else pcall(function() t:Activate() end) end
+        v4Active=true; return
+    end end end
+    for _,rn in ipairs(V4R) do
+        local r=game.ReplicatedStorage:FindFirstChild(rn,true)
+        if r then
+            if r:IsA("RemoteEvent") then pcall(function() r:FireServer() end)
+            else pcall(function() r:InvokeServer() end) end
+            v4Active=true; return
+        end
+    end
+    pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.J,false,game) end); task.wait(0.08)
+    pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.J,false,game) end); v4Active=true
+end
+
+local function isV4BarFull()
+    local pg=LP:FindFirstChild("PlayerGui"); if not pg then return false end
+    local kw={"race","v4","awaken","fourth","gauge","charge","bar","fill"}
+    for _,obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("Frame") or obj:IsA("ImageLabel") then
+            local n=obj.Name:lower()
+            for _,k in ipairs(kw) do
+                if n:find(k) then
+                    if obj.Size.X.Scale>=0.95 then return true end
+                    local par=obj.Parent
+                    if par and par:IsA("GuiObject") and par.AbsoluteSize.X>0 then
+                        if (obj.AbsoluteSize.X/par.AbsoluteSize.X)>=0.95 then return true end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function v4Loop()
+    v4Active=false
+    while CFG.V4.Enabled do
+        task.wait(0.3)
+        if not CFG.V4.Enabled then break end
+        if isV4BarFull() then fireV4(); task.wait(2) end
+    end
+    v4Active=false
+end
+
+local function doM1()
+    local vp=Camera.ViewportSize; local cx,cy=vp.X/2,vp.Y/2
+    pcall(function() VIM:SendMouseButtonEvent(cx,cy,0,true, game,0) end); task.wait(0.05)
+    pcall(function() VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end)
+end
+local function doSK(kc)
+    pcall(function() VIM:SendKeyEvent(true, kc,false,game) end); task.wait(0.08)
+    pcall(function() VIM:SendKeyEvent(false,kc,false,game) end)
+end
+
+local lM1=0; local lSK=0; local sI=1; local sB=false
+RunService.Heartbeat:Connect(function()
+    if not CFG.Fly.Enabled then return end
+    local mH=getHRP(LP); if not mH then return end
+    local t=getFly(); if not t or not isAlive(t) then return end
+    local eH=getHRP(t); if not eH then return end
+    if (eH.Position-mH.Position).Magnitude>CFG.Fly.StopRange+3 then return end
+    equipStyle(); local now=tick()
+    if (now-lM1)>=CFG.Fly.M1Delay then lM1=now; task.spawn(doM1) end
+    if CFG.Fly.UseSkills and not sB and (now-lSK)>=CFG.Fly.SkillDelay then
+        lSK=now; sB=true; local s=CFG.Fly.SkillKeys[sI]; sI=(sI%#CFG.Fly.SkillKeys)+1
+        task.spawn(function() doSK(s); task.wait(0.5); sB=false end)
+    end
+end)
+
+local lAura=0
+RunService.Heartbeat:Connect(function()
+    if not CFG.Aura.Enabled then return end
+    local now=tick(); if (now-lAura)<CFG.Aura.Rate then return end
+    local mH=getHRP(LP); if not mH then return end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LP and isAlive(p) then
+            local h=getHRP(p)
+            if h and (h.Position-mH.Position).Magnitude<=CFG.Aura.Range then
+                Camera.CFrame=CFrame.new(Camera.CFrame.Position,
+                    h.Position+Vector3.new(0,CFG.Lock.YOff,0))
+                lAura=now; task.spawn(doM1)
+            end
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if not CFG.HB.Enabled then return end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LP then local c=getChar(p); if c then
+            for _,pt in ipairs(c:GetDescendants()) do
+                if pt:IsA("BasePart") then pt.Size=CFG.HB.Size end
+            end
+        end end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if not CFG.Block.Enabled then return end
+    local t=getFly() or getLock(); if not t then return end
+    local e=getHRP(t); local m=getHRP(LP); if not e or not m then return end
+    if (e.Position-m.Position).Magnitude<=CFG.Block.Range then
+        local r=game.ReplicatedStorage:FindFirstChild("Block",true)
+        if r and r:IsA("RemoteEvent") then pcall(function() r:FireServer("Block",true) end) end
+    end
+end)
+
+local dCd=false; local VU=game:GetService("VirtualUser")
+RunService.Heartbeat:Connect(function()
+    if not CFG.Dodge.Enabled or dCd then return end
+    local hum=getHum(LP)
+    if hum and (hum.Health/math.max(hum.MaxHealth,1))<CFG.Dodge.HP then
+        dCd=true; VU:CaptureController()
+        VU:ClickButton1(Vector2.new(0,0)); task.wait(0.05)
+        VU:ClickButton1(Vector2.new(0,0)); task.wait(1.2); dCd=false
+    end
+end)
+
+local function nukeBV()
+    if activeBV then pcall(function() activeBV:Destroy() end); activeBV=nil end
+end
+
+local function getBV()
+    local h=getHRP(LP); if not h then return nil end
+    if activeBV and activeBV.Parent==h then return activeBV end
+    nukeBV()
+    local bv=Instance.new("BodyVelocity"); bv.Name="_WSFly"
+    bv.MaxForce=Vector3.new(1e6,1e6,1e6); bv.Velocity=Vector3.zero
+    bv.Parent=h; activeBV=bv; return bv
+end
+
+LP.CharacterRemoving:Connect(nukeBV)
+
+local function nc(on)
+    local c=getChar(LP); if not c then return end
+    for _,p in ipairs(c:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide=not on end
+    end
+end
+
+RunService.Stepped:Connect(function() if CFG.Fly.Enabled then nc(true) end end)
+
+RunService.Heartbeat:Connect(function()
+    if not CFG.Fly.Enabled then
+        if activeBV then
+            activeBV.Velocity=Vector3.zero; nukeBV()
+            local h=getHum(LP); if h then h:ChangeState(Enum.HumanoidStateType.GettingUp) end
+            nc(false)
+        end; return
+    end
+    local mH=getHRP(LP); local hum=getHum(LP); if not mH or not hum then return end
+    local t=getFly(); local eH=t and getHRP(t)
+    hum:ChangeState(Enum.HumanoidStateType.Physics); nc(true)
+    if not eH then local bv=getBV(); if bv then bv.Velocity=Vector3.zero end; return end
+    local dist=(eH.Position-mH.Position).Magnitude
+    if dist<=CFG.Fly.StopRange then
+        local bv=getBV(); if bv then bv.Velocity=Vector3.zero end
+        mH.CFrame=CFrame.new(mH.Position,Vector3.new(eH.Position.X,mH.Position.Y,eH.Position.Z)); return
+    end
+    local bv=getBV(); if not bv then return end
+    local tp=dist>CFG.Fly.DiveRange
+        and eH.Position+Vector3.new(0,CFG.Fly.HoverHeight,0) or eH.Position
+    bv.Velocity=bv.Velocity:Lerp((tp-mH.Position).Unit*CFG.Fly.Speed,CFG.Fly.Smooth)
+    mH.CFrame=CFrame.new(mH.Position,Vector3.new(eH.Position.X,mH.Position.Y,eH.Position.Z))
+end)
+
+-- ═══════════════════════════════════════════════
+--  UI
+-- ═══════════════════════════════════════════════
+pcall(function()
+    local o=game.CoreGui:FindFirstChild("_WS"); if o then o:Destroy() end
+end)
+
+local SG=Instance.new("ScreenGui")
+SG.Name="_WS"; SG.ResetOnSpawn=false
+SG.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; SG.Parent=game.CoreGui
+
+local P={
+    b0=Color3.fromRGB(4,5,12),    b1=Color3.fromRGB(8,10,20),
+    b2=Color3.fromRGB(12,15,28),  b3=Color3.fromRGB(17,21,38),
+    b4=Color3.fromRGB(24,29,52),  b5=Color3.fromRGB(32,39,65),
+    iWht=Color3.fromRGB(235,245,255), iHi=Color3.fromRGB(195,225,255),
+    iBri=Color3.fromRGB(135,202,255), iMid=Color3.fromRGB(85,162,255),
+    iDim=Color3.fromRGB(44,100,195), iFog=Color3.fromRGB(8,16,46),
+    tHi=Color3.fromRGB(230,240,255),  tMd=Color3.fromRGB(120,145,198),
+    tLo=Color3.fromRGB(58,70,112),    tMu=Color3.fromRGB(30,37,65),
+    grn=Color3.fromRGB(48,212,108),   amb=Color3.fromRGB(232,172,44),
+    red=Color3.fromRGB(218,50,50),    redD=Color3.fromRGB(48,9,9),
+    redM=Color3.fromRGB(72,14,14),    pur=Color3.fromRGB(155,105,255),
+    bSub=Color3.fromRGB(16,22,46),    bMd=Color3.fromRGB(28,38,76),
+    bFnt=Color3.fromRGB(58,78,140),   bGlw=Color3.fromRGB(85,135,255),
+    gTop=Color3.fromRGB(255,255,255), gMid=Color3.fromRGB(175,212,255),
+}
+
+local function gs(par,y,h,a,pad)
+    local f=Instance.new("Frame",par)
+    f.Position=UDim2.new(0,pad or 4,0,y); f.Size=UDim2.new(1,-(pad or 4)*2,0,h)
+    f.BackgroundColor3=P.gTop; f.BackgroundTransparency=a; f.BorderSizePixel=0
+    Instance.new("UICorner",f).CornerRadius=UDim.new(1,0)
+end
+local function mkC(p,r) Instance.new("UICorner",p).CornerRadius=UDim.new(0,r or 8) end
+local function mkS(p,c,t) local s=Instance.new("UIStroke",p); s.Color=c; s.Thickness=t or 0.6
+    s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; return s end
+local function mkT(p,c,a,r) local f=Instance.new("Frame",p); f.Size=UDim2.new(1,0,1,0)
+    f.BackgroundColor3=c; f.BackgroundTransparency=a; f.BorderSizePixel=0; mkC(f,r or 8); return f end
+
+-- ── ROOT — video clipped inside ───────────────
+local root=Instance.new("Frame",SG)
+root.Position=UDim2.new(0,14,0,14); root.Size=UDim2.new(0,142,0,10)
+root.BackgroundColor3=Color3.fromRGB(0,0,0)
+root.BorderSizePixel=0; root.Active=true; root.Draggable=true
+root.ClipsDescendants=true   -- hard clip: video stays inside panel
+root.ZIndex=2
+mkC(root,11); mkS(root,P.bMd,1)
+
+-- video fills the entire panel, behind everything
+local vid=Instance.new("VideoFrame",root)
+vid.Size=UDim2.new(1,0,1,0); vid.Position=UDim2.new(0,0,0,0)
+vid.BackgroundTransparency=1; vid.Looped=true; vid.ZIndex=0
+vid.Video="rbxassetid://14034293796"
+vid:GetPropertyChangedSignal("IsLoaded"):Connect(function()
+    if vid.IsLoaded then vid:Play() end
+end)
+task.spawn(function() task.wait(1); pcall(function() vid:Play() end) end)
+
+-- dark overlay over video so text stays readable
+local vidDim=Instance.new("Frame",root)
+vidDim.Size=UDim2.new(1,0,1,0); vidDim.BackgroundColor3=Color3.fromRGB(2,2,10)
+vidDim.BackgroundTransparency=0.25; vidDim.BorderSizePixel=0; vidDim.ZIndex=1
+
+-- ice tint
+mkT(root,P.iDim,0.86,11)
+
+-- glass sheens on top
+gs(root,1,1,0.40,5); gs(root,3,1,0.65,8); gs(root,5,1,0.84,12)
+
+-- top accent line
+local tpAcc=Instance.new("Frame",root)
+tpAcc.Size=UDim2.new(1,0,0,2); tpAcc.BackgroundColor3=P.iMid; tpAcc.BorderSizePixel=0; mkC(tpAcc,11)
+local tpG=Instance.new("Frame",root)
+tpG.Size=UDim2.new(0.6,0,0,3); tpG.Position=UDim2.new(0.2,0,0,-1)
+tpG.BackgroundColor3=P.iBri; tpG.BackgroundTransparency=0.50; tpG.BorderSizePixel=0; tpG.ZIndex=1; mkC(tpG,10)
+
+-- ── HEADER ────────────────────────────────────
+local hdr=Instance.new("Frame",root)
+hdr.Size=UDim2.new(1,0,0,30); hdr.Position=UDim2.new(0,0,0,2)
+hdr.BackgroundColor3=P.b1; hdr.BackgroundTransparency=0.15; hdr.BorderSizePixel=0; hdr.ZIndex=2
+gs(hdr,1,1,0.50,4); gs(hdr,3,1,0.76,7)
+local hDiv=Instance.new("Frame",hdr)
+hDiv.Size=UDim2.new(1,0,0,1); hDiv.Position=UDim2.new(0,0,1,-1)
+hDiv.BackgroundColor3=P.bMd; hDiv.BorderSizePixel=0
+
+local pip=Instance.new("Frame",hdr)
+pip.Size=UDim2.new(0,3,0,15); pip.Position=UDim2.new(0,8,0.5,-7.5)
+pip.BackgroundColor3=P.iMid; pip.BorderSizePixel=0; mkC(pip,2)
+local pipG=Instance.new("Frame",hdr)
+pipG.Size=UDim2.new(0,8,0,15); pipG.Position=UDim2.new(0,6,0.5,-7.5)
+pipG.BackgroundColor3=P.iMid; pipG.BackgroundTransparency=0.68; pipG.BorderSizePixel=0; mkC(pipG,4)
+
+local hTtl=Instance.new("TextLabel",hdr)
+hTtl.Size=UDim2.new(1,-46,1,0); hTtl.Position=UDim2.new(0,16,0,0)
+hTtl.BackgroundTransparency=1; hTtl.Text="Winter Scripts"
+hTtl.TextColor3=P.iHi; hTtl.Font=Enum.Font.GothamBold
+hTtl.TextSize=11; hTtl.TextXAlignment=Enum.TextXAlignment.Left
+
+local function mkHBtn(x,bg,bs,tc,g)
+    local w=Instance.new("Frame",hdr)
+    w.Size=UDim2.new(0,17,0,17); w.Position=UDim2.new(1,x,0.5,-8.5)
+    w.BackgroundColor3=bg; w.BorderSizePixel=0; mkC(w,5); mkS(w,bs,0.6); gs(w,1,1,0.60,2)
+    local b=Instance.new("TextButton",w)
+    b.Size=UDim2.new(1,0,1,0); b.BackgroundTransparency=1
+    b.Text=g; b.TextColor3=tc; b.Font=Enum.Font.GothamBold; b.TextSize=12; b.ZIndex=4
+    return b
+end
+local minBtn  =mkHBtn(-38,P.b3,P.bMd,P.tMd,"−")
+local closeBtn=mkHBtn(-19,P.redM,P.red,P.red,"×")
+
+-- ── BODY ──────────────────────────────────────
+local body=Instance.new("Frame",root)
+body.Position=UDim2.new(0,0,0,32); body.BackgroundTransparency=1; body.BorderSizePixel=0; body.ZIndex=2
+
+local cy=6; local RH=22; local RG=2
+
+local function mkRow(lbl,key,ac,cfg,field,cb)
+    local w=Instance.new("Frame",body)
+    w.Size=UDim2.new(1,-12,0,RH); w.Position=UDim2.new(0,6,0,cy)
+    w.BackgroundColor3=P.b2; w.BackgroundTransparency=0.18; w.BorderSizePixel=0
+    mkC(w,7); local wS=mkS(w,P.bSub,0.5)
+    mkT(w,P.b0,0.60,7); gs(w,1,1,0.55,3); gs(w,3,1,0.78,6)
+    cy=cy+RH+RG
+
+    local pl=Instance.new("Frame",w)
+    pl.Size=UDim2.new(0,3,0.6,0); pl.Position=UDim2.new(0,0,0.2,0)
+    pl.BackgroundColor3=P.tMu; pl.BorderSizePixel=0; mkC(pl,2)
+    local plG=Instance.new("Frame",w)
+    plG.Size=UDim2.new(0,8,0.6,0); plG.Position=UDim2.new(0,-3,0.2,0)
+    plG.BackgroundColor3=P.tMu; plG.BackgroundTransparency=0.84; plG.BorderSizePixel=0; mkC(plG,4)
+
+    local lEl=Instance.new("TextLabel",w)
+    lEl.Size=UDim2.new(1,-64,1,0); lEl.Position=UDim2.new(0,9,0,0)
+    lEl.BackgroundTransparency=1; lEl.Text=lbl
+    lEl.TextColor3=P.tLo; lEl.Font=Enum.Font.Gotham
+    lEl.TextSize=10; lEl.TextXAlignment=Enum.TextXAlignment.Left
+
+    local kW=Instance.new("Frame",w)
+    kW.Size=UDim2.new(0,17,0,12); kW.Position=UDim2.new(1,-52,0.5,-6)
+    kW.BackgroundColor3=P.b3; kW.BorderSizePixel=0; mkC(kW,4)
+    local kS=mkS(kW,P.bSub,0.5); gs(kW,0,1,0.70,2)
+    local kL=Instance.new("TextLabel",kW)
+    kL.Size=UDim2.new(1,0,1,0); kL.BackgroundTransparency=1
+    kL.Text=tostring(key):match("%.(%w+)$") or "?"
+    kL.TextColor3=P.tLo; kL.Font=Enum.Font.GothamBold; kL.TextSize=7
+
+    local trk=Instance.new("Frame",w)
+    trk.Size=UDim2.new(0,28,0,15); trk.Position=UDim2.new(1,-32,0.5,-7.5)
+    trk.BackgroundColor3=P.b4; trk.BorderSizePixel=0; mkC(trk,10)
+    local tS=mkS(trk,P.bSub,0.5); gs(trk,1,1,0.68,3)
+
+    local thm=Instance.new("Frame",trk)
+    thm.Size=UDim2.new(0,11,0,11); thm.Position=UDim2.new(0,2,0.5,-5.5)
+    thm.BackgroundColor3=P.tLo; thm.BorderSizePixel=0; mkC(thm,10)
+    local tH=Instance.new("Frame",thm); tH.Size=UDim2.new(0.72,0,0.40,0); tH.Position=UDim2.new(0.12,0,0.08,0)
+    tH.BackgroundColor3=P.gTop; tH.BackgroundTransparency=0.50; tH.BorderSizePixel=0; mkC(tH,6)
+    local tR=Instance.new("Frame",thm); tR.Size=UDim2.new(0.52,0,0.26,0); tR.Position=UDim2.new(0.24,0,0.65,0)
+    tR.BackgroundColor3=P.gTop; tR.BackgroundTransparency=0.78; tR.BorderSizePixel=0; mkC(tR,4)
+
+    local hit=Instance.new("TextButton",w)
+    hit.Size=UDim2.new(1,0,1,0); hit.BackgroundTransparency=1; hit.Text=""; hit.ZIndex=5
+
+    local function ref()
+        local on=cfg[field]
+        trk.BackgroundColor3 = on and ac or P.b4
+        tS.Color             = on and ac or P.bSub
+        thm.BackgroundColor3 = on and P.gTop or P.tLo
+        thm.Position         = on and UDim2.new(1,-13,0.5,-5.5) or UDim2.new(0,2,0.5,-5.5)
+        w.BackgroundColor3   = on and P.b3 or P.b2
+        w.BackgroundTransparency = on and 0.10 or 0.18
+        wS.Color             = on and P.bGlw or P.bSub; wS.Thickness = on and 0.8 or 0.5
+        lEl.TextColor3       = on and P.tHi or P.tLo
+        kL.TextColor3        = on and P.iBri or P.tLo
+        kW.BackgroundColor3  = on and P.iFog or P.b3
+        kS.Color             = on and P.iDim or P.bSub
+        pl.BackgroundColor3  = on and ac or P.tMu
+        plG.BackgroundColor3 = on and ac or P.tMu
+        plG.BackgroundTransparency = on and 0.60 or 0.84
+    end
+
+    hit.MouseButton1Click:Connect(function()
+        cfg[field]=not cfg[field]; ref(); if cb then cb(cfg[field]) end
+    end)
+    ref(); return ref
+end
+
+local function mkDiv()
+    local d=Instance.new("Frame",body)
+    d.Size=UDim2.new(1,-20,0,1); d.Position=UDim2.new(0,10,0,cy)
+    d.BackgroundColor3=P.bSub; d.BackgroundTransparency=0.3; d.BorderSizePixel=0; cy=cy+5
+    local dc=Instance.new("Frame",d); dc.Size=UDim2.new(0,18,0,1); dc.Position=UDim2.new(0.5,-9,0,0)
+    dc.BackgroundColor3=P.iDim; dc.BorderSizePixel=0
+end
+local function mkSec(txt)
+    local f=Instance.new("TextLabel",body)
+    f.Size=UDim2.new(1,-12,0,10); f.Position=UDim2.new(0,6,0,cy)
+    f.BackgroundTransparency=1; f.Text=txt; f.TextColor3=P.tMu
+    f.Font=Enum.Font.GothamBold; f.TextSize=6; f.TextXAlignment=Enum.TextXAlignment.Left
+    cy=cy+12
+end
+
+mkSec("MOVEMENT")
+local rFly =mkRow("Auto Kill", CFG.Fly.Key,  P.iMid, CFG.Fly,  "Enabled",
+    function(on) if on then flyTarget=manualTarget or furthest() else flyTarget=nil end end)
+mkDiv(); mkSec("COMBAT")
+local rLock=mkRow("Lock On",   CFG.Lock.Key, P.iBri, CFG.Lock, "Enabled",
+    function(on)
+        if on then
+            if manualTarget and isAlive(manualTarget) then lockedTarget=manualTarget
+            else cyclelock() end
+        else lockedTarget=nil end
+    end)
+local rAura=mkRow("Kill Aura", CFG.Aura.Key, P.red,  CFG.Aura, "Enabled")
+local rHB  =mkRow("Hitbox",    Enum.KeyCode.H, P.amb, CFG.HB,  "Enabled")
+local rV4  =mkRow("Auto V4",   CFG.V4.Key,   P.pur,  CFG.V4,   "Enabled",
+    function(on) if on then task.spawn(v4Loop) else v4Active=false end end)
+mkDiv()
+
+-- target card
+local tCard=Instance.new("Frame",body)
+tCard.Size=UDim2.new(1,-12,0,44); tCard.Position=UDim2.new(0,6,0,cy)
+tCard.BackgroundColor3=P.b1; tCard.BackgroundTransparency=0.15; tCard.BorderSizePixel=0
+mkC(tCard,9); local tcS=mkS(tCard,P.bSub,0.6)
+mkT(tCard,P.iDim,0.90,9); gs(tCard,1,1,0.46,5); gs(tCard,3,1,0.70,8)
+cy=cy+48
+
+local sDot=Instance.new("Frame",tCard)
+sDot.Size=UDim2.new(0,7,0,7); sDot.Position=UDim2.new(0,9,0,9)
+sDot.BackgroundColor3=P.tLo; sDot.BorderSizePixel=0; mkC(sDot,10)
+local sDotG=mkS(sDot,P.iMid,1.2); sDotG.Transparency=1
+
+local tcLbl=Instance.new("TextLabel",tCard)
+tcLbl.Size=UDim2.new(1,-20,0,9); tcLbl.Position=UDim2.new(0,20,0,7)
+tcLbl.BackgroundTransparency=1; tcLbl.Text="TARGET"; tcLbl.TextColor3=P.tMu
+tcLbl.Font=Enum.Font.GothamBold; tcLbl.TextSize=6; tcLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+local tNm=Instance.new("TextLabel",tCard)
+tNm.Size=UDim2.new(1,-12,0,15); tNm.Position=UDim2.new(0,9,0,16)
+tNm.BackgroundTransparency=1; tNm.Text="none"; tNm.TextColor3=P.tMu
+tNm.Font=Enum.Font.GothamBold; tNm.TextSize=12; tNm.TextXAlignment=Enum.TextXAlignment.Left
+tNm.TextTruncate=Enum.TextTruncate.AtEnd
+_G._WSTgt=tNm
+
+local hpBG=Instance.new("Frame",tCard)
+hpBG.Size=UDim2.new(1,-18,0,4); hpBG.Position=UDim2.new(0,9,0,36)
+hpBG.BackgroundColor3=P.b4; hpBG.BorderSizePixel=0; mkC(hpBG,10); mkS(hpBG,P.bSub,0.4)
+local hpF=Instance.new("Frame",hpBG)
+hpF.Size=UDim2.new(0,0,1,0); hpF.BackgroundColor3=P.grn; hpF.BorderSizePixel=0; mkC(hpF,10)
+local hpShn=Instance.new("Frame",hpBG)
+hpShn.Size=UDim2.new(1,0,0.55,0); hpShn.BackgroundColor3=P.gTop
+hpShn.BackgroundTransparency=0.80; hpShn.BorderSizePixel=0; mkC(hpShn,10)
+
+RunService.Heartbeat:Connect(function()
+    local t=getFly() or getLock()
+    if not t then
+        sDot.BackgroundColor3=P.tLo; sDotG.Transparency=1
+        tcS.Color=P.bSub; hpF.Size=UDim2.new(0,0,1,0); return
+    end
+    local hum=getHum(t); if not hum then return end
+    local hp=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+    hpF.Size=UDim2.new(hp,0,1,0)
+    hpF.BackgroundColor3=hp>0.6 and P.grn or (hp>0.3 and P.amb or P.red)
+    sDot.BackgroundColor3=P.iMid; sDotG.Transparency=0.08
+    tcS.Color=P.bGlw; tcS.Thickness=0.9
+end)
+
+mkDiv()
+
+-- player list header
+local plH=Instance.new("Frame",body)
+plH.Size=UDim2.new(1,-12,0,12); plH.Position=UDim2.new(0,6,0,cy)
+plH.BackgroundTransparency=1; plH.BorderSizePixel=0; cy=cy+13
+local plL=Instance.new("TextLabel",plH); plL.Size=UDim2.new(0.5,0,1,0)
+plL.BackgroundTransparency=1; plL.Text="PLAYERS"; plL.TextColor3=P.tLo
+plL.Font=Enum.Font.GothamBold; plL.TextSize=6; plL.TextXAlignment=Enum.TextXAlignment.Left
+local plR=Instance.new("TextLabel",plH); plR.Size=UDim2.new(0.5,0,1,0); plR.Position=UDim2.new(0.5,0,0,0)
+plR.BackgroundTransparency=1; plR.Text="tap to lock"; plR.TextColor3=P.tMu
+plR.Font=Enum.Font.Gotham; plR.TextSize=6; plR.TextXAlignment=Enum.TextXAlignment.Right
+
+-- list glass card
+local lWrap=Instance.new("Frame",body)
+lWrap.Size=UDim2.new(1,-12,0,62); lWrap.Position=UDim2.new(0,6,0,cy)
+lWrap.BackgroundColor3=P.b1; lWrap.BackgroundTransparency=0.18; lWrap.BorderSizePixel=0
+mkC(lWrap,8); mkS(lWrap,P.bSub,0.5); mkT(lWrap,P.iDim,0.92,8); gs(lWrap,1,1,0.58,4)
+
+local listF=Instance.new("ScrollingFrame",lWrap)
+listF.Size=UDim2.new(1,-2,1,-2); listF.Position=UDim2.new(0,1,0,1)
+listF.BackgroundTransparency=1; listF.BorderSizePixel=0
+listF.ScrollBarThickness=2; listF.ScrollBarImageColor3=P.iDim; listF.CanvasSize=UDim2.new(0,0,0,0)
+Instance.new("UIListLayout",listF).Padding=UDim.new(0,1)
+cy=cy+66
+
+-- hint strip
+local hintW=Instance.new("Frame",body)
+hintW.Size=UDim2.new(1,-12,0,15); hintW.Position=UDim2.new(0,6,0,cy)
+hintW.BackgroundColor3=P.b2; hintW.BackgroundTransparency=0.20; hintW.BorderSizePixel=0
+mkC(hintW,8); mkS(hintW,P.bSub,0.4); gs(hintW,1,1,0.65,5)
+local hintL=Instance.new("TextLabel",hintW)
+hintL.Size=UDim2.new(1,0,1,0); hintL.BackgroundTransparency=1
+hintL.Text="[-] hide  ·  [G] tp  ·  [−] minimize"
+hintL.TextColor3=P.tMu; hintL.Font=Enum.Font.Gotham
+hintL.TextSize=7; hintL.TextXAlignment=Enum.TextXAlignment.Center
+cy=cy+18
+
+body.Size=UDim2.new(1,0,0,cy+4)
+root.Size=UDim2.new(0,142,0,32+cy+4)
+local FULL_H=32+cy+4
+
+-- list builder
+local function buildList()
+    for _,c in ipairs(listF:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
+    local list=enemies()
+    for _,e in ipairs(list) do
+        local isSel=manualTarget==e.p
+        local isAny=(flyTarget==e.p or lockedTarget==e.p) and not isSel
+        local r=Instance.new("Frame",listF)
+        r.Size=UDim2.new(1,-4,0,19); r.BorderSizePixel=0
+        r.BackgroundColor3=isSel and P.iFog or P.b2
+        r.BackgroundTransparency=isSel and 0.05 or 0.20
+        mkC(r,5)
+        if isSel then mkS(r,P.bGlw,0.7) end
+        gs(r,0,1,isSel and 0.62 or 0.82,3)
+        if isSel then
+            mkT(r,P.iMid,0.88,5)
+            local acc=Instance.new("Frame",r)
+            acc.Size=UDim2.new(0,2,0.6,0); acc.Position=UDim2.new(0,0,0.2,0)
+            acc.BackgroundColor3=P.iBri; acc.BorderSizePixel=0; mkC(acc,2)
+            local aG=Instance.new("Frame",r)
+            aG.Size=UDim2.new(0,7,0.6,0); aG.Position=UDim2.new(0,-2,0.2,0)
+            aG.BackgroundColor3=P.iBri; aG.BackgroundTransparency=0.70; aG.BorderSizePixel=0; mkC(aG,4)
+        end
+        local dot=Instance.new("Frame",r)
+        dot.Size=UDim2.new(0,5,0,5); dot.Position=UDim2.new(0,7,0.5,-2.5)
+        dot.BackgroundColor3=isSel and P.iBri or (isAny and P.iDim or P.b5)
+        dot.BorderSizePixel=0; mkC(dot,10)
+        if isSel then mkS(dot,P.iMid,0.8) end
+        local nm=Instance.new("TextLabel",r)
+        nm.Size=UDim2.new(1,-40,1,0); nm.Position=UDim2.new(0,15,0,0)
+        nm.BackgroundTransparency=1; nm.Font=Enum.Font.Gotham; nm.TextSize=11
+        nm.TextXAlignment=Enum.TextXAlignment.Left; nm.TextTruncate=Enum.TextTruncate.AtEnd
+        nm.Text=e.p.Name..(isSel and " ●" or "")
+        nm.TextColor3=isSel and P.iHi or (isAny and P.tMd or P.tLo)
+        local dL=Instance.new("TextLabel",r)
+        dL.Size=UDim2.new(0,28,1,0); dL.Position=UDim2.new(1,-30,0,0)
+        dL.BackgroundTransparency=1; dL.Font=Enum.Font.Gotham; dL.TextSize=9
+        dL.TextXAlignment=Enum.TextXAlignment.Right; dL.TextColor3=P.tMu
+        dL.Text=math.floor(e.d).."s"
+        local hit=Instance.new("TextButton",r)
+        hit.Size=UDim2.new(1,0,1,0); hit.BackgroundTransparency=1; hit.Text=""; hit.ZIndex=3
+        hit.MouseButton1Click:Connect(function()
+            if manualTarget==e.p then
+                manualTarget=nil
+                if CFG.Fly.Enabled  then flyTarget=furthest() end
+                if CFG.Lock.Enabled then cyclelock() end
+            else
+                manualTarget=e.p
+                if CFG.Fly.Enabled  then flyTarget=manualTarget end
+                if CFG.Lock.Enabled then lockedTarget=manualTarget end
+            end
+            buildList()
+        end)
+    end
+    listF.CanvasSize=UDim2.new(0,0,0,#list*20)
+    listF.CanvasPosition=Vector2.new(0,math.max(0,#list*20-60))
+end
+
+task.spawn(function()
+    while task.wait(1) do if not _G._WS_Closed then buildList() end end
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    if manualTarget==p then manualTarget=nil end
+    if flyTarget==p    then flyTarget=furthest() end
+    if lockedTarget==p then lockedTarget=nil end
+end)
+
+-- confirm close
+local ovr=Instance.new("Frame",root)
+ovr.Size=UDim2.new(1,0,1,0); ovr.BackgroundColor3=P.b0
+ovr.BackgroundTransparency=0.05; ovr.BorderSizePixel=0; ovr.ZIndex=20; ovr.Visible=false
+mkC(ovr,11)
+
+local cBox=Instance.new("Frame",ovr)
+cBox.Size=UDim2.new(1,-18,0,86); cBox.Position=UDim2.new(0,9,0.5,-43)
+cBox.BackgroundColor3=P.b2; cBox.BackgroundTransparency=0.08; cBox.BorderSizePixel=0
+mkC(cBox,10); mkS(cBox,P.bFnt,0.8); mkT(cBox,P.redM,0.88,10)
+gs(cBox,1,1,0.44,5); gs(cBox,3,1,0.68,8)
+
+local cAcc=Instance.new("Frame",cBox)
+cAcc.Size=UDim2.new(1,0,0,2); cAcc.BackgroundColor3=P.red; cAcc.BorderSizePixel=0; mkC(cAcc,10)
+local cAG=Instance.new("Frame",cBox)
+cAG.Size=UDim2.new(0.55,0,0,4); cAG.Position=UDim2.new(0.225,0,0,-1)
+cAG.BackgroundColor3=P.red; cAG.BackgroundTransparency=0.58; cAG.BorderSizePixel=0; mkC(cAG,10)
+
+local cQ=Instance.new("TextLabel",cBox)
+cQ.Size=UDim2.new(1,-10,0,17); cQ.Position=UDim2.new(0,5,0,9)
+cQ.BackgroundTransparency=1; cQ.Text="Close Winter Scripts?"
+cQ.TextColor3=P.tHi; cQ.Font=Enum.Font.GothamBold; cQ.TextSize=12; cQ.TextXAlignment=Enum.TextXAlignment.Center
+
+local cSub=Instance.new("TextLabel",cBox)
+cSub.Size=UDim2.new(1,-10,0,12); cSub.Position=UDim2.new(0,5,0,28)
+cSub.BackgroundTransparency=1; cSub.Text="All features will stop."
+cSub.TextColor3=P.tLo; cSub.Font=Enum.Font.Gotham; cSub.TextSize=10; cSub.TextXAlignment=Enum.TextXAlignment.Center
+
+local function mkCBtn(xp,bg,bs,tc,txt)
+    local bW=Instance.new("Frame",cBox)
+    bW.Size=UDim2.new(0.44,0,0,24); bW.Position=UDim2.new(xp,0,1,-32)
+    bW.BackgroundColor3=bg; bW.BorderSizePixel=0; mkC(bW,7); mkS(bW,bs,0.6); gs(bW,1,1,0.50,3)
+    local b=Instance.new("TextButton",bW)
+    b.Size=UDim2.new(1,0,1,0); b.BackgroundTransparency=1
+    b.Text=txt; b.TextColor3=tc; b.Font=Enum.Font.GothamBold; b.TextSize=11; b.ZIndex=2
+    return b
+end
+local yB=mkCBtn(0.03,P.redM,P.red,P.red,"Yes")
+local nB=mkCBtn(0.53,P.b3,P.bMd,P.tMd,"No")
+
+closeBtn.MouseButton1Click:Connect(function() ovr.Visible=true end)
+nB.MouseButton1Click:Connect(function() ovr.Visible=false end)
+yB.MouseButton1Click:Connect(function()
+    _G._WS_Closed=true; SG:Destroy()
+    CFG.Fly.Enabled=false; CFG.Lock.Enabled=false
+    CFG.Aura.Enabled=false; CFG.V4.Enabled=false; CFG.HB.Enabled=false
+end)
+
+local mini=false
+minBtn.MouseButton1Click:Connect(function()
+    mini=not mini; body.Visible=not mini
+    root.Size=UDim2.new(0,142,0,mini and 32 or FULL_H)
+    minBtn.Text=mini and "+" or "−"
+end)
+
+UserInputService.InputBegan:Connect(function(inp,gpe)
+    if gpe then return end
+    local k=inp.KeyCode
+    if k==Enum.KeyCode.Minus then
+        uiVisible=not uiVisible; root.Visible=uiVisible
+    elseif k==CFG.Fly.Key then
+        CFG.Fly.Enabled=not CFG.Fly.Enabled; rFly()
+        if CFG.Fly.Enabled then flyTarget=manualTarget or furthest()
+        else flyTarget=nil
+            local h=getHum(LP); if h then h:ChangeState(Enum.HumanoidStateType.GettingUp) end
+            nc(false) end
+    elseif k==CFG.Lock.Key then
+        CFG.Lock.Enabled=not CFG.Lock.Enabled; rLock()
+        if CFG.Lock.Enabled then
+            if manualTarget and isAlive(manualTarget) then lockedTarget=manualTarget
+            else cyclelock() end
+        else lockedTarget=nil end
+    elseif k==CFG.Aura.Key then CFG.Aura.Enabled=not CFG.Aura.Enabled; rAura()
+    elseif k==Enum.KeyCode.H then CFG.HB.Enabled=not CFG.HB.Enabled; rHB()
+    elseif k==CFG.V4.Key then
+        CFG.V4.Enabled=not CFG.V4.Enabled; rV4()
+        if CFG.V4.Enabled then task.spawn(v4Loop) else v4Active=false end
+    elseif k==CFG.TP.Key then
+        local t=getFly() or getLock()
+        if t then local e=getHRP(t); local m=getHRP(LP)
+            if e and m then m.CFrame=e.CFrame+CFG.TP.Off end end
+    end
+end)
+
+local espD={}
+local function bESP(player)
+    if espD[player] then return end
+    local data={}
+    local sb=Instance.new("SelectionBox")
+    sb.LineThickness=0.04; sb.SurfaceTransparency=CFG.ESP.T; sb.Parent=game.CoreGui; data.sb=sb
+    local bb=Instance.new("BillboardGui")
+    bb.AlwaysOnTop=true; bb.Size=UDim2.new(0,110,0,30)
+    bb.StudsOffset=Vector3.new(0,4,0); bb.Parent=game.CoreGui; data.bb=bb
+    local nl=Instance.new("TextLabel",bb)
+    nl.Size=UDim2.new(1,0,0.52,0); nl.BackgroundTransparency=1
+    nl.TextStrokeTransparency=0; nl.Font=Enum.Font.GothamBold; nl.TextScaled=true
+    nl.Text=player.Name; data.nl=nl
+    local bg=Instance.new("Frame",bb)
+    bg.Size=UDim2.new(1,0,0.16,0); bg.Position=UDim2.new(0,0,0.56,0)
+    bg.BackgroundColor3=Color3.fromRGB(8,8,8); bg.BorderSizePixel=0
+    Instance.new("UICorner",bg).CornerRadius=UDim.new(1,0)
+    local fill=Instance.new("Frame",bg)
+    fill.Size=UDim2.new(1,0,1,0); fill.BackgroundColor3=CFG.ESP.BarOn
+    fill.BorderSizePixel=0; Instance.new("UICorner",fill).CornerRadius=UDim.new(1,0)
+    data.fill=fill
+    local dl=Instance.new("TextLabel",bb)
+    dl.Size=UDim2.new(1,0,0.28,0); dl.Position=UDim2.new(0,0,0.72,0)
+    dl.BackgroundTransparency=1; dl.TextStrokeTransparency=0.3
+    dl.Font=Enum.Font.Gotham; dl.TextScaled=true; data.dl=dl
+    local function chams(char)
+        for _,p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then pcall(function()
+                p.Material=Enum.Material.Neon; p.Transparency=CFG.ESP.T
+            end) end
+        end
+    end
+    local function wire(char)
+        task.wait(0.8); local h=char:FindFirstChild("HumanoidRootPart"); if not h then return end
+        sb.Adornee=char; bb.Adornee=h; chams(char)
+    end
+    if player.Character then task.spawn(wire,player.Character) end
+    player.CharacterAdded:Connect(wire); espD[player]=data
+    RunService.Heartbeat:Connect(function()
+        if not espD[player] then return end
+        local h=getHRP(player); local hum=getHum(player); local mH=getHRP(LP)
+        if h and hum and hum.Health>0 and mH then
+            local d=math.floor((h.Position-mH.Position).Magnitude)
+            local hp=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+            local isTgt=(manualTarget==player or flyTarget==player or lockedTarget==player)
+            local col=isTgt and P.iBri or (d<20 and P.red or (d<60 and P.amb or P.grn))
+            bb.Adornee=h; sb.Adornee=player.Character
+            data.fill.Size=UDim2.new(hp,0,1,0)
+            data.fill.BackgroundColor3=hp>0.5 and CFG.ESP.BarOn or CFG.ESP.BarOff
+            data.dl.Text=d.."s"; data.dl.TextColor3=col
+            data.nl.TextColor3=col; sb.Color3=col; sb.SurfaceColor3=col
+        else bb.Adornee=nil; sb.Adornee=nil end
+    end)
+end
+
+local function dESP(p)
+    local d=espD[p]; if not d then return end
+    pcall(function() d.sb:Destroy() end); pcall(function() d.bb:Destroy() end); espD[p]=nil
+end
+
+for _,p in ipairs(Players:GetPlayers()) do if p~=LP then bESP(p) end end
+Players.PlayerAdded:Connect(function(p) task.wait(1); bESP(p) end)
+Players.PlayerRemoving:Connect(function(p)
+    if manualTarget==p then manualTarget=nil end
+    if flyTarget==p    then flyTarget=furthest() end
+    if lockedTarget==p then lockedTarget=nil end
+    dESP(p)
+end)
+
+LP.CharacterAdded:Connect(function()
+    nukeBV(); manualTarget=nil; flyTarget=nil; lockedTarget=nil; task.wait(1)
+    for _,p in ipairs(Players:GetPlayers()) do if p~=LP then dESP(p); bESP(p) end end
+end)
+
+print("Winter Scripts — video inside panel — F:kill L:lock T:aura H:hitbox V:v4 G:tp -:hide")
